@@ -1,0 +1,93 @@
+#!/bin/bash
+
+# Erzeugt die Virtual-Host-Konfigurationen für den Apache-Webserver.
+#
+# Über ein Python-Skript werden die Dateien erzeugt. Falls diese von den
+# aktuellen Dateien abweichen, werden diese einzeln kopiert und dabei
+# versioniert.
+
+# Apache-Konfigurationsverzeichnis
+VHOSTDIR=/etc/apache2/sites.d
+
+# Temporaeren Ordner erzeugen
+TEMPDIR=`tempfile --prefix=ldap2zone`
+rm $TEMPDIR
+mkdir $TEMPDIR/
+
+# Ordner für "nobody" beschreibbar machen
+chown nobody $TEMPDIR
+
+# LDAP auslesen und VHOST-Dateien erzeugen
+su nobody --command="/usr/local/bin/ldap2vhost \
+ --dn=cn=ldap2dns,ou=batch,ou=users,dc=ds,dc=jandankert,dc=de \
+ -p ldap2dns \
+ --base=ou=dns,dc=ds,dc=jandankert,dc=de \
+ --output-dir=$TEMPDIR"
+
+reload=false
+
+for f in $TEMPDIR/*; do
+    f=`basename $f`
+    
+
+    # Datei geaendert? Dann kopieren und dabei Backupfile erzeugen
+    if [ ! -f $VHOSTDIR/$f -o  ! `diff -q $TEMPDIR/$f $VHOSTDIR/$f|wc -l` = "0" ]; then
+	reload=true
+	echo "Apache-VHOST ist geaendert oder neu: $VHOSTDIR/$f"
+        diff $VHOSTDIR/$f $TEMPDIR/$f
+	cp -v --backup=t $TEMPDIR/$f $VHOSTDIR/$f
+    fi
+done
+
+# Temporären Ordner löschen
+rm -r $TEMPDIR
+
+# Testen, ob alle DocumentRoot vorhanden sind
+for f in `find /etc/apache2/sites.d/ -regex .+[a-z]$`; do
+	for dc in `grep DocumentRoot $f|cut -f 4 -d " "`; do
+		if [ ! -d $dc ]; then
+			echo "DocumentRoot $dc does not exist"
+			mkdir -v $dc
+			user=`echo $dc|cut -f 3 -d "/"`
+			echo User $user
+			chown -v $user:$user $dc
+		fi
+	done
+done
+
+
+# Testen, ob alle AccessLog/ErrorLog vorhanden sind
+for f in `find /etc/apache2/sites.d/ -regex .+[a-z]$`; do
+	for lf in `egrep "(CustomLog|ErrorLog)" $f|cut -f 4 -d " "`; do
+		ldir=`dirname $lf`
+		if [ ! -d $ldir ]; then
+			echo "Ausgabeordner $ldir does not exist"
+			mkdir -v $ldir
+		fi
+	done
+done
+
+# Apache-Webserver muss Konfiguration neu laden
+if $reload; then
+    if [ ! `apache2ctl -t|grep "Syntax OK"|wc -l` = "0" ]; then
+	echo "Apache-Konfiguraton ist fehlerhaft! Kein Restart."
+	apache2ctl -t
+    else
+	echo "Apache-Konfiguration ist OK."
+	echo "Reloading Apache Webserver."
+	apache2ctl restart 
+    fi
+fi
+
+
+
+
+
+
+
+
+
+
+
+
+

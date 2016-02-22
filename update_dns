@@ -1,0 +1,121 @@
+#!/bin/bash
+
+# Erzeugt nach Bedarf neue Zonendateien für den Nameserver.
+# Aus der Datenbank werden die Domain-Informationen geladen und daraus die Zonefiles geschrieben.
+
+# Konfiguration:
+
+# Bind9-Verzeichnis mit Zonen
+ZONEDIR=/etc/bind/db.d
+ALL_ZONES_FILE=/etc/bind/db.d/named.conf.local
+
+# Datenbank
+MYSQL_USER=cron
+MYSQL_PASSWORD=twGeL8nKbECs5aKU
+MYSQL_DATABASE=verwaltung
+
+if [ ! -d $ZONEDIR/.hg ]; then
+    hg -R $ZONEDIR init
+fi
+
+function sql {
+    sql=$1
+    mysql -u $MYSQL_USER -p$MYSQL_PASSWORD -se "$sql" $MYSQL_DATABASE
+}
+
+
+last_domain_modified=`sql "SELECT max(unix_timestamp(modified)) FROM domain WHERE domain REGEXP('^[a-z0-9-]+\..[a-z]+\$') and active=1"`
+last_file_modified=`stat --format %Y $ALL_ZONES_FILE`
+
+if [ "$last_domain_modified" -gt "$last_file_modified" ]; then
+
+    echo "" > $ALL_ZONES_FILE
+    sql "SELECT domain FROM domain WHERE domain REGEXP('^[a-z0-9-]+\..[a-z]+\$') and active=1"|while read domain; do
+	cat >> $ALL_ZONES_FILE <<EOF
+
+zone "$domain" {
+  type master;
+  file "$ZONEDIR/db.$domain";
+};
+EOF
+    done
+    
+    # Änderung Einchecken
+    hg -R $ZONEDIR diff $ALL_ZONES_FILE
+    hg -R $ZONEDIR add $ALL_ZONES_FILE
+    hg -R $ZONEDIR commit -u `whoami`/$0 -m "Master-Zonefile $ZONEFILE changed from Cron" $ALL_ZONES_FILE
+
+fi
+
+
+sql "SELECT domain FROM domain WHERE domain REGEXP('^[a-z0-9-]+\..[a-z]+\$') and active=1"|while read domain; do
+    
+    #echo "Domain: $domain"
+    last_modified=`sql "SELECT max(unix_timestamp(modified)) FROM domain WHERE domain like '%.$domain' OR domain='$domain'"`
+    
+    
+	ZONEFILE=$ZONEDIR/db.$domain
+	if [ -f $ZONEFILE ]; then # Zonefile schon vorhanden?
+	    modified=`stat --format %Y $ZONEFILE`
+	else
+	    modified=0 # Noch kein Zonefile vorhanden
+	fi
+
+    # Ist das letzte Datum aus der Datenbank größer als das Änderungsdatum des Zonefiles?
+    if	[ "$last_modified" -gt "$modified" ]; then
+	echo "Zonefile $ZONFILE wird aktualisiert (Letzte Änderung der Datei: $modified, Letzte Änderung in Datenbank: $last_modified"
+	serial=`date --date @$last_modified +"%Y%m%d%H"` # Seriennummer, eindeutig pro Stunde
+
+
+	cat > $ZONEFILE <<ZEOF
+;
+; Domain: $domain
+;
+\$TTL 2H
+@                    IN SOA   ns1.jdhh.de. root.ns1.jdhh.de. $serial 86400 10800 1209600 57600
+                     IN NS    ns1.jdhh.de.
+                     IN NS    nsb3.schlundtech.de.
+                     IN MX    10 mail.jdhh.de.
+                     IN MX    20 mail02.jdhh.de.
+                     IN A     85.214.76.132
+                     IN TXT   "v=spf1 a mx -all"
+ZEOF
+
+	# Hat die Domain Mailboxen? Falls ja, dann MX-Eintrag ergänzen
+        count_mailboxes=`sql "SELECT count(*) FROM mailbox WHERE domain='$domain'"`
+        if [ "$count_mailboxes" -gt 0 ]; then
+    		echo "                     IN MX    10 mail.jdhh.de." >> $ZONEFILE
+    		echo "                     IN MX    20 mail02.jdhh.de." >> $ZONEFILE
+        fi
+
+	# Subdomain-Liste
+        sql "SELECT replace(domain,'.$domain','') FROM domain WHERE domain like '%.$domain' "|while read subdomain; do
+            echo -n $subdomain|sed -e :a -e 's/^.\{1,20\}$/& /;ta' >> $ZONEFILE # 24-stellig aufgefuellt mit Leerzeichen
+	    echo "IN A     85.214.76.132" >> $ZONEFILE
+	    
+	    # Hat die Subdomain Mailboxen? Falls ja, dann MX-Eintrag ergänzen
+    	    count_mailboxes=`sql "SELECT count(*) FROM mailbox WHERE domain='$subdomain'"`
+    	    if [ "$count_mailboxes" -gt 0 ]; then
+        	echo -n $subdomain|sed -e :a -e 's/^.\{1,20\}$/& /;ta' >> $ZONEFILE # 24-stellig aufgefuellt mit Leerzeichen
+    		echo "                     IN MX    10 mail.jdhh.de." >> $ZONEFILE
+        	echo -n $subdomain|sed -e :a -e 's/^.\{1,20\}$/& /;ta' >> $ZONEFILE # 24-stellig aufgefuellt mit Leerzeichen
+    		echo "                     IN MX    20 mail02.jdhh.de." >> $ZONEFILE
+    	    fi
+	    
+	done
+	echo "" >> $ZONEFILE
+
+                                                                                                                              
+
+	# Änderung Einchecken
+	hg -R $ZONEDIR diff $ZONEFILE
+	hg -R $ZONEDIR add $ZONEFILE
+	hg -R $ZONEDIR commit -u `whoami`/$0 -m "Zonefile $ZONEFILE changed from Cron" $ZONEFILE
+	
+	# Zonefile im Bind neu laden
+	rndc reload
+	rndc status
+    fi
+    
+done
+

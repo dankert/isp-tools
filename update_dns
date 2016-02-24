@@ -5,14 +5,15 @@
 
 # Konfiguration:
 
-# Bind9-Verzeichnis mit Zonen
-ZONEDIR=/etc/bind/db.d
-ALL_ZONES_FILE=/etc/bind/db.d/named.conf.local
+CONFIG=/etc/default/ispconfig
 
-# Datenbank
-MYSQL_USER=cron
-MYSQL_PASSWORD=twGeL8nKbECs5aKU
-MYSQL_DATABASE=verwaltung
+if [ ! -f $CONFIG  ]; then
+    echo "File $CONFIG not found"
+    exit 4;
+fi
+
+source $CONFIG
+
 
 if [ ! -d $ZONEDIR/.hg ]; then
     hg -R $ZONEDIR init
@@ -24,13 +25,14 @@ function sql {
 }
 
 
+# Datei mit allen Zonen erzeugen
 last_domain_modified=`sql "SELECT max(unix_timestamp(modified)) FROM domain WHERE domain REGEXP('^[a-z0-9-]+\..[a-z]+\$') and active=1"`
 last_file_modified=`stat --format %Y $ALL_ZONES_FILE`
 
 if [ "$last_domain_modified" -gt "$last_file_modified" ]; then
 
     echo "" > $ALL_ZONES_FILE
-    sql "SELECT domain FROM domain WHERE domain REGEXP('^[a-z0-9-]+\..[a-z]+\$') and active=1"|while read domain; do
+    sql "SELECT domain FROM domain WHERE domain REGEXP('^[a-z0-9-]+\..[a-z]+\$') and active=1 order by domain"|while read domain; do
 	cat >> $ALL_ZONES_FILE <<EOF
 
 zone "$domain" {
@@ -75,31 +77,34 @@ sql "SELECT domain FROM domain WHERE domain REGEXP('^[a-z0-9-]+\..[a-z]+\$') and
 @                    IN SOA   ns1.jdhh.de. root.ns1.jdhh.de. $serial 86400 10800 1209600 57600
                      IN NS    ns1.jdhh.de.
                      IN NS    nsb3.schlundtech.de.
-                     IN MX    10 mail.jdhh.de.
-                     IN MX    20 mail02.jdhh.de.
                      IN A     85.214.76.132
                      IN TXT   "v=spf1 a mx -all"
 ZEOF
 
-	# Hat die Domain Mailboxen? Falls ja, dann MX-Eintrag ergänzen
-        count_mailboxes=`sql "SELECT count(*) FROM mailbox WHERE domain='$domain'"`
+	# Hat die Domain Mailboxen oder Aliases? Falls ja, dann MX-Eintrag ergänzen
+        count_mailboxes=`sql "select sum(c) FROM
+                         ( select count(*) as c from mailbox WHERE domain='$domain' union all
+                           select count(*) as c FROM alias   WHERE domain='$domain'             ) as counts"`
         if [ "$count_mailboxes" -gt 0 ]; then
     		echo "                     IN MX    10 mail.jdhh.de." >> $ZONEFILE
     		echo "                     IN MX    20 mail02.jdhh.de." >> $ZONEFILE
         fi
 
 	# Subdomain-Liste
-        sql "SELECT replace(domain,'.$domain','') FROM domain WHERE domain like '%.$domain' "|while read subdomain; do
+        sql "SELECT replace(domain,'.$domain','') as subdomain FROM domain WHERE domain like '%.$domain' order by subdomain"|while read subdomain; do
             echo -n $subdomain|sed -e :a -e 's/^.\{1,20\}$/& /;ta' >> $ZONEFILE # 24-stellig aufgefuellt mit Leerzeichen
 	    echo "IN A     85.214.76.132" >> $ZONEFILE
 	    
-	    # Hat die Subdomain Mailboxen? Falls ja, dann MX-Eintrag ergänzen
-    	    count_mailboxes=`sql "SELECT count(*) FROM mailbox WHERE domain='$subdomain'"`
+	    # Hat die Subdomain Mailboxen oder Aliases? Falls ja, dann MX-Eintrag ergänzen
+    	    count_mailboxes=`sql "select sum(c) FROM
+                         ( select count(*) as c from mailbox WHERE domain='$subdomain.$domain' union all
+                           select count(*) as c FROM alias   WHERE domain='$subdomain.$domain'             ) as counts"`
+
     	    if [ "$count_mailboxes" -gt 0 ]; then
         	echo -n $subdomain|sed -e :a -e 's/^.\{1,20\}$/& /;ta' >> $ZONEFILE # 24-stellig aufgefuellt mit Leerzeichen
-    		echo "                     IN MX    10 mail.jdhh.de." >> $ZONEFILE
+    		echo "IN MX    10 mail.jdhh.de." >> $ZONEFILE
         	echo -n $subdomain|sed -e :a -e 's/^.\{1,20\}$/& /;ta' >> $ZONEFILE # 24-stellig aufgefuellt mit Leerzeichen
-    		echo "                     IN MX    20 mail02.jdhh.de." >> $ZONEFILE
+    		echo "IN MX    20 mail02.jdhh.de." >> $ZONEFILE
     	    fi
 	    
 	done

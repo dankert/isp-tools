@@ -44,13 +44,15 @@ fi
 
 
 
-create_map transport        "select distinct domain,'virtual:' from mailbox where active=1"
+create_map transport        "select distinct domain,'virtual:' from alias where active=1"
 create_map aliases          "select address,goto from alias where active=1"
 create_map sender           "select concat(local_part,'@',domain),concat(local_part,'@',domain) from mailbox where active=1"
 create_map virtualforward   "select '# n/a','' from mailbox where active=1"
 create_map accounts         "select concat(local_part,'@',domain) , concat(maildir,'/') from mailbox where active=1"
 create_map accountsmap      "select concat(local_part,'@',domain) , concat(local_part,'@',domain) from mailbox where active=1"
-create_map recipient_reject "select concat(local_part,'@',domain), 'REJECT' from mailbox where active=0"
+
+# Ablehnen: Deaktivierte Mailboxen und deaktivierte Aliases
+create_map recipient_reject "select concat(local_part,'@',domain), 'REJECT' from mailbox where active=0 union select address,'REJECT' from alias where active=0"
 
 hg -R $MTA_CONFIG_DIR diff
 hg -R $MTA_CONFIG_DIR commit -u `whoami` -m "Updating Postfix configuration"

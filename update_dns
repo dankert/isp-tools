@@ -78,6 +78,7 @@ sql "SELECT domain FROM domain WHERE domain REGEXP('^[a-z0-9-]+\..[a-z]+\$') and
                      IN NS    ns1.jdhh.de.
                      IN NS    nsb3.schlundtech.de.
                      IN A     85.214.76.132
+                     IN AAAA  2a01:238:43b1:5800:8b3:855e:7f32:cb19
                      IN TXT   "v=spf1 a mx -all"
 ZEOF
 
@@ -93,7 +94,9 @@ ZEOF
 	# Subdomain-Liste
         sql "SELECT replace(domain,'.$domain','') as subdomain FROM domain WHERE domain like '%.$domain' order by subdomain"|while read subdomain; do
             echo -n $subdomain|sed -e :a -e 's/^.\{1,20\}$/& /;ta' >> $ZONEFILE # 24-stellig aufgefuellt mit Leerzeichen
-	    echo "IN A     85.214.76.132" >> $ZONEFILE
+	    echo "IN A     85.214.76.132"                          >> $ZONEFILE
+            echo -n $subdomain|sed -e :a -e 's/^.\{1,20\}$/& /;ta' >> $ZONEFILE # 24-stellig aufgefuellt mit Leerzeichen
+	    echo "IN AAAA  2a01:238:43b1:5800:8b3:855e:7f32:cb19"  >> $ZONEFILE
 	    
 	    # Hat die Subdomain Mailboxen oder Aliases? Falls ja, dann MX-Eintrag ergänzen
     	    count_mailboxes=`sql "select sum(c) FROM

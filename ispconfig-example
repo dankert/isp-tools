@@ -1,0 +1,31 @@
+#!/bin/bash
+
+# Place this file here: /etc/default/ispconfig
+
+# Database
+MYSQL_USER=dbuser
+MYSQL_PASSWORD=secret
+MYSQL_DATABASE=isp
+
+
+# DNS-configuration
+# Bind9-Directory
+DNS_ZONEDIR=/etc/bind/db.d
+DNS_ALL_ZONES_FILE=/etc/bind/db.d/named.conf.local
+DNS_SERVER_IPV4=10.1.1.1
+DNS_SERVER_IPV6=fd80:23::2
+DNS_MX_HOST1=mail.example.de
+DNS_MX_HOST2=mail02.example.de
+DNS_SERVER_PRIMARY=ns1.example.de
+DNS_SERVER_SECONDARY=nsx.yourisp.example.de
+
+
+# MTA-Konfiguration
+MTA_CONFIG_DIR=/etc/postfix/ldap/
+
+
+# HTTPD-Config
+HTTPD_VHOST_DIR=/etc/apache2/sites.d
+HTTPD_EXTRA_CONFIG_DIR=/etc/apache2/sites-extra
+HTTPD_MYSQL_PASSWD_DIR=/etc/apache2/sites-mysql-passwd
+

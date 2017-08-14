@@ -15,8 +15,8 @@ fi
 source $CONFIG
 
 
-if [ ! -d $ZONEDIR/.hg ]; then
-    hg -R $ZONEDIR init
+if [ ! -d $DNS_ZONEDIR/.hg ]; then
+    hg -R $DNS_ZONEDIR init
 fi
 
 function sql {
@@ -27,25 +27,25 @@ function sql {
 
 # Datei mit allen Zonen erzeugen
 last_domain_modified=`sql "SELECT max(unix_timestamp(modified)) FROM domain WHERE domain REGEXP('^[a-z0-9-]+\..[a-z]+\$') and active=1"`
-last_file_modified=`stat --format %Y $ALL_ZONES_FILE`
+last_file_modified=`stat --format %Y $DNS_ALL_ZONES_FILE`
 
 if [ "$last_domain_modified" -gt "$last_file_modified" ]; then
 
-    echo "" > $ALL_ZONES_FILE
+    echo "" > $DNS_ALL_ZONES_FILE
     sql "SELECT domain FROM domain WHERE domain REGEXP('^[a-z0-9-]+\..[a-z]+\$') and active=1 order by domain"|while read domain; do
-	cat >> $ALL_ZONES_FILE <<EOF
+	cat >> $DNS_ALL_ZONES_FILE <<EOF
 
 zone "$domain" {
   type master;
-  file "$ZONEDIR/db.$domain";
+  file "$DNS_ZONEDIR/db.$domain";
 };
 EOF
     done
     
     # Änderung Einchecken
-    hg -R $ZONEDIR diff $ALL_ZONES_FILE
-    hg -R $ZONEDIR add $ALL_ZONES_FILE
-    hg -R $ZONEDIR commit -u `whoami`/$0 -m "Master-Zonefile $ZONEFILE changed from Cron" $ALL_ZONES_FILE
+    hg -R $DNS_ZONEDIR diff $DNS_ALL_ZONES_FILE
+    hg -R $DNS_ZONEDIR add $DNS_ALL_ZONES_FILE
+    hg -R $DNS_ZONEDIR commit -u `whoami`/$0 -m "Master-Zonefile $ZONEFILE changed from Cron" $DNS_ALL_ZONES_FILE
 
 fi
 
@@ -56,7 +56,7 @@ sql "SELECT domain FROM domain WHERE domain REGEXP('^[a-z0-9-]+\..[a-z]+\$') and
     last_modified=`sql "SELECT max(unix_timestamp(modified)) FROM domain WHERE domain like '%.$domain' OR domain='$domain'"`
     
     
-	ZONEFILE=$ZONEDIR/db.$domain
+	ZONEFILE=$DNS_ZONEDIR/db.$domain
 	if [ -f $ZONEFILE ]; then # Zonefile schon vorhanden?
 	    modified=`stat --format %Y $ZONEFILE`
 	else
@@ -74,12 +74,12 @@ sql "SELECT domain FROM domain WHERE domain REGEXP('^[a-z0-9-]+\..[a-z]+\$') and
 ; Domain: $domain
 ;
 \$TTL 2H
-@                    IN SOA   ns1.jdhh.de. root.ns1.jdhh.de. $serial 86400 10800 1209600 57600
-                     IN NS    ns1.jdhh.de.
-                     IN NS    nsb3.schlundtech.de.
-                     IN A     85.214.76.132
-                     IN AAAA  2a01:238:43b1:5800:8b3:855e:7f32:cb19
-                     IN TXT   "v=spf1 a mx -all"
+@                     IN SOA   $DNS_SERVER_PRIMARY. root.$DNS_SERVER_PRIMARY. $serial 86400 10800 1209600 57600
+                      IN NS    $DNS_SERVER_PRIMARY.
+                      IN NS    $DNS_SERVER_SECONDARY.
+                      IN A     $DNS_SERVER_IPV4
+                      IN AAAA  $DNS_SERVER_IPV6
+                      IN TXT   "v=spf1 a mx -all"
 ZEOF
 
 	# Hat die Domain Mailboxen oder Aliases? Falls ja, dann MX-Eintrag ergänzen
@@ -87,16 +87,15 @@ ZEOF
                          ( select count(*) as c from mailbox WHERE domain='$domain' union all
                            select count(*) as c FROM alias   WHERE domain='$domain'             ) as counts"`
         if [ "$count_mailboxes" -gt 0 ]; then
-    		echo "                     IN MX    10 mail.jdhh.de." >> $ZONEFILE
-    		echo "                     IN MX    20 mail02.jdhh.de." >> $ZONEFILE
+    		echo "                      IN MX    10 $DNS_MX_HOST1." >> $ZONEFILE
+    		echo "                      IN MX    20 $DNS_MX_HOST2." >> $ZONEFILE
         fi
 
 	# Subdomain-Liste
         sql "SELECT replace(domain,'.$domain','') as subdomain FROM domain WHERE domain like '%.$domain' order by subdomain"|while read subdomain; do
-            echo -n $subdomain|sed -e :a -e 's/^.\{1,20\}$/& /;ta' >> $ZONEFILE # 24-stellig aufgefuellt mit Leerzeichen
-	    echo "IN A     85.214.76.132"                          >> $ZONEFILE
-            echo -n $subdomain|sed -e :a -e 's/^.\{1,20\}$/& /;ta' >> $ZONEFILE # 24-stellig aufgefuellt mit Leerzeichen
-	    echo "IN AAAA  2a01:238:43b1:5800:8b3:855e:7f32:cb19"  >> $ZONEFILE
+            subdomain_rpad=`echo -n $subdomain|sed -e :a -e 's/^.\{1,20\}$/& /;ta'`  # Subdomain 24-stellig aufgefuellt mit Leerzeichen
+	    echo "$subdomain_rpad IN A     $DNS_SERVER_IPV4" >> $ZONEFILE
+	    echo "$subdomain_rpad IN AAAA  $DNS_SERVER_IPV6" >> $ZONEFILE
 	    
 	    # Hat die Subdomain Mailboxen oder Aliases? Falls ja, dann MX-Eintrag ergänzen
     	    count_mailboxes=`sql "select sum(c) FROM
@@ -104,10 +103,8 @@ ZEOF
                            select count(*) as c FROM alias   WHERE domain='$subdomain.$domain'             ) as counts"`
 
     	    if [ "$count_mailboxes" -gt 0 ]; then
-        	echo -n $subdomain|sed -e :a -e 's/^.\{1,20\}$/& /;ta' >> $ZONEFILE # 24-stellig aufgefuellt mit Leerzeichen
-    		echo "IN MX    10 mail.jdhh.de." >> $ZONEFILE
-        	echo -n $subdomain|sed -e :a -e 's/^.\{1,20\}$/& /;ta' >> $ZONEFILE # 24-stellig aufgefuellt mit Leerzeichen
-    		echo "IN MX    20 mail02.jdhh.de." >> $ZONEFILE
+    		echo "$subdomain_rpad IN MX    10 $DNS_MX_HOST1." >> $ZONEFILE
+    		echo "$subdomain_rpad IN MX    20 $DNS_MX_HOST2." >> $ZONEFILE
     	    fi
 	    
 	done
@@ -116,9 +113,9 @@ ZEOF
                                                                                                                               
 
 	# Änderung Einchecken
-	hg -R $ZONEDIR diff $ZONEFILE
-	hg -R $ZONEDIR add $ZONEFILE
-	hg -R $ZONEDIR commit -u `whoami`/$0 -m "Zonefile $ZONEFILE changed from Cron" $ZONEFILE
+	hg -R $DNS_ZONEDIR diff $ZONEFILE
+	hg -R $DNS_ZONEDIR add $ZONEFILE
+	hg -R $DNS_ZONEDIR commit -u `whoami`/$0 -m "Zonefile $ZONEFILE changed from Cron" $ZONEFILE
 	
 	# Zonefile im Bind neu laden
 	rndc reload

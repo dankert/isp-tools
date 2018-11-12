@@ -36,7 +36,7 @@ function sql_admin {
     sql=$1
     #echo "SQL: $sql"
     #return
-    mysql -u root -pss19a -se "$sql" $MYSQL_DATABASE
+    mysql -u $MYSQL_ADMIN_USER -p$MYSQL_ADMIN_PASSWORD -se "$sql" $MYSQL_DATABASE
 }
 
 

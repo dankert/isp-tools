@@ -3,9 +3,11 @@
 # Place this file here: /etc/default/ispconfig
 
 # Database
+MYSQL_DATABASE=isp
 MYSQL_USER=dbuser
 MYSQL_PASSWORD=secret
-MYSQL_DATABASE=isp
+MYSQL_ADMIN_USER=root
+MYSQL_ADMIN_PASSWORD=verysecret
 
 
 # DNS-configuration

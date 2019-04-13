@@ -33,45 +33,68 @@ function sql {
 }
 
 
-sql "SELECT UNIX_TIMESTAMP(modified),domain FROM domain WHERE active=1"|while read modified domain; do
+sql "SELECT domain,active,UNIX_TIMESTAMP(modified),x_ssl,x_db,x_php FROM domain"|while read domain active modified ssl db php; do
 
     CONFFILE=$HTTPD_VHOST_DIR/$domain
 
     if [ ! -f $CONFFILE ]; then
-	last_file_modified=0
+	last_file_modified=0 # Datei existiert noch nicht.
     else
 	last_file_modified=`stat --format %Y $CONFFILE`
     fi
 
     if	[ "$modified" -gt "$last_file_modified" ]; then
 
-    echo "Aktualisiere $domain"
-    
-    # Den Benutzer zur Domain zu finden. Es ist der (hoffentlich einzige) <Benutzername>@webmaster..., der für die Domain berechtigt ist.
-    user=`sql "SELECT substring_index(username,'@',1) as user FROM domain_admins where domain='$domain' and username like '%@webmaster%'"`
-    echo "User: $user  ==>  Domain: $domain"
-    
-    
-    
-    if [ ! "$user" ]; then
-    
-    	if [ -f $HTTPD_EXTRA_CONFIG_DIR/$domain.conf ]; then
-		cat > $CONFFILE <<EOF
+        echo "Aktualisiere $domain"
+	cat > $CONFFILE <<EOF
 	
 # AUTO-GENERATED - DO NOT CHANGE!
-# Domain: $domain
+# Domain: $domain (active: $active, SSL: $ssl, Database: $db, PHP: $php)
+EOF
+    if [ $active -eq 0 ]; then
+	cat >> $CONFFILE <<EOF
+# domain is inactive.
 <VirtualHost *:80>
     ServerName $domain
-    Include $HTTPD_EXTRA_CONFIG_DIR/$domain.conf"
+
+    RewriteEngine on
+    RewriteRule (.*) - [L,R=410]
+</VirtualHost>
+<VirtualHost *:443>
+    ServerName $domain
+
+    RewriteEngine on
+    RewriteRule (.*) - [L,R=410]
+</VirtualHost>
+EOF
+
+    
+    else
+	# Domain ist aktiv.
+	# Den Benutzer zur Domain zu finden. Es ist der (hoffentlich einzige) <Benutzername>@webmaster..., der für die Domain berechtigt ist.
+	user=`sql "SELECT substring_index(username,'@',1) as user FROM domain_admins where domain='$domain' and username like '%@webmaster%'"`
+	echo "User: $user  ==>  Domain: $domain"
+    
+    
+	# Gibt es einen Domain-Admin?
+	if [ ! "$user" ]; then
+    
+	# Kein Domain-Admin vorhanden, die Domain hat keine regulaeren Inhalte.
+    	if [ -f $HTTPD_EXTRA_CONFIG_DIR/$domain.conf ]; then
+		cat >> $CONFFILE <<EOF
+	
+<VirtualHost *:80>
+    # Kein Domainverantwortlicher vorhanden
+    ServerName $domain
+    Include $HTTPD_EXTRA_CONFIG_DIR/$domain.conf
 </VirtualHost>
 EOF
 	else
 
-		cat > $CONFFILE <<EOF
+		cat >> $CONFFILE <<EOF
 	
-# AUTO-GENERATED - DO NOT CHANGE!
-# Domain $domain disabled
 <VirtualHost *:80>
+    # Kein Domainverantwortlicher vorhanden
     ServerName $domain
 
     RewriteEngine on
@@ -79,95 +102,72 @@ EOF
 </VirtualHost>
 EOF
 	fi
-    else
-	docroot=/home/$user/var/www/$domain
-	
-	if [ ! -d $docroot ]; then
-	    # Document-Root existiert noch nicht, also anlegen.
-	    mkdir -v $docroot
-	    chown -v $user $docroot
-	fi
-	
-	if [ -f $HTTPD_EXTRA_CONFIG_DIR/$domain.conf ]; then
-	    extra_config="    Include $HTTPD_EXTRA_CONFIG_DIR/$domain.conf"
 	else
-	    extra_config="    # No Config in $HTTPD_EXTRA_CONFIG_DIR/$domain.conf"
-	fi
-	if [ -f $HTTPD_MYSQL_PASSWD_DIR/$domain.passwd ]; then
-	    source $HTTPD_MYSQL_PASSWD_DIR/$domain.passwd
-	    echo "pass ist $mysql_password"
-	    mysql_config=$(cat << EOF
-php_value mysql.default_host localhost
-php_value mysql.default_user $mysql_user
-php_value mysql.default_password $mysql_password
-
-php_value mysqli.default_host localhost
-php_value mysqli.default_user $mysql_user
-php_value mysqli.default_pw $mysql_password
+	    cat >> $CONFFILE <<EOF
+# Domain administrator user account: $user
 EOF
-)
-	else
-	    mysql_config="    # No Mysql Config"
-	fi
-    
-    
-	log_dir=/home/$user/var/log/apache2/$domain
+	    # Es gibt einen Domainverwalter.
+	    # Docroot:
+	    docroot=/home/$user/var/www/$domain
 	
-	if [ ! -d $log_dir ]; then
-	    mkdir -v $log_dir
-	fi
+	    if [ ! -d $docroot ]; then
+		# Document-Root existiert noch nicht, also anlegen.
+		mkdir -v $docroot
+		chown -v $user $docroot
+	    fi
 	
-	#echo "Logdir: $log_dir"
 	
-	if [ -f /etc/ssl/local/cert/$domain.crt ]; then
-	    crt=/etc/ssl/local/cert/$domain.crt
-	else
-	    crt=/etc/ssl/local/cert/webmail.weiherhei.de.crt
-	fi
-	key=/etc/ssl/local/server.key
+
+    	    log_dir=/home/$user/var/log/apache2/$domain
 	
+	    if [ ! -d $log_dir ]; then
+		mkdir -v $log_dir
+	    fi
+	
+	    #echo "Logdir: $log_dir"
 	
 	
 	
-	cat > $CONFFILE <<EOF
 	
-# AUTO-GENERATED - DO NOT CHANGE!
-# Domain $domain User: $user
+	    if [ $ssl -eq 0 ]; then
+	
+		cat >> $CONFFILE <<EOF
+	
+#<VirtualHost *:443>
+#    # Deny SSL
+#    ServerName $domain
+#    SSLEngine off
+#    RewriteEngine on
+#    RewriteRule (.*) http://$domain\$1 [R,L]
+#</VirtualHost>
+
+<VirtualHost *:80>
+EOF
+	    else
+		# Zertifikatsdatei bestimmen
+		key=/etc/ssl/local/server.key
+		crt=/etc/ssl/local/cert/$domain.crt
+		if [ ! -f $crt ]; then
+		    mailcrt=/etc/ssl/local/cert/`postconf -h myhostname`.crt
+		    if [ -f $mailcrt ]; then
+			ln -s $mailcrt $crt
+		    else
+			touch $crt # Leere Zertifikatsdatei anlegen.
+		    fi
+		fi
+		
+		cat >> $CONFFILE <<EOF
+	
 <VirtualHost *:80>
     ServerName $domain
-    ServerAdmin webmaster@$domain
-
-    DocumentRoot $docroot
-
-    php_admin_value sendmail_path "/usr/sbin/sendmail -t -i -r webmaster@$domain"
-    php_admin_value open_basedir /home/$user/var/www/$domain:/home/$user/tmp
-    php_admin_value upload_tmp_dir /home/$user/tmp
-
-    ErrorLog $log_dir/error.log
-    CustomLog $log_dir/access.log combined
-    
-    $extra_config
-    
-    $mysql_config
+    # Force SSL
+    RewriteEngine on
+    RewriteCond %{REQUEST_URI} !^/\.well-known/acme-challenge/
+    RewriteRule ^(.*)$ https://$domain\$1 [R=301,L]
 </VirtualHost>
 
 <VirtualHost *:443>
-    ServerName $domain
-    ServerAdmin webmaster@$domain
 
-    DocumentRoot $docroot
-
-    php_admin_value sendmail_path "/usr/sbin/sendmail -t -i -r webmaster@$domain"
-    php_admin_value open_basedir /home/$user/var/www/$domain:/home/$user/tmp
-    php_admin_value upload_tmp_dir /home/$user/tmp
-
-    ErrorLog $log_dir/error.log
-    CustomLog $log_dir/access.log combined
-    
-    $extra_config
-    $mysql_config
-    
-    
     SSLEngine on
     SSLCertificateFile    $crt
     SSLCertificateKeyFile $key
@@ -177,15 +177,63 @@ EOF
     
     SSLHonorCipherOrder On
     SSLCipherSuite ECDH+AESGCM:DH+AESGCM:ECDH+AES256:DH+AES256:ECDH+AES128:DH+AES:ECDH+3DES:DH+3DES:RSA+AESGCM:RSA+AES:RSA+3DES:!aNULL:!MD5:!DSS
-
-</VirtualHost>
-
 EOF
+		fi
+		
+
+		cat >> $CONFFILE <<EOF
+    ServerName $domain
+    ServerAdmin webmaster@$domain
+
+    DocumentRoot $docroot
+
+
+    ErrorLog $log_dir/error.log
+    CustomLog $log_dir/access.log combined
+EOF
+		if [ -f $HTTPD_EXTRA_CONFIG_DIR/$domain.conf ]; then
+		    cat >> $CONFFILE <<EOF
+    Include $HTTPD_EXTRA_CONFIG_DIR/$domain.conf
+EOF
+		fi
+
+		# PHP aktiviert?
+		if [ $php -eq 1 ]; then
+    		cat >> $CONFFILE <<EOF
+    php_admin_flag engine on
+    php_admin_value sendmail_path "/usr/sbin/sendmail -t -i -r webmaster@$domain"
+    php_admin_value open_basedir /home/$user/var/www/$domain:/home/$user/tmp
+    php_admin_value upload_tmp_dir /home/$user/tmp
+EOF
+		else
+    		    cat >> $CONFFILE <<EOF
+    php_admin_flag engine off
+EOF
+		fi
 	
+		#if [ $php -eq 1 && $db -eq 1 ]; then
+		if [ $db -eq 1 ]; then
+		    if [ -f $HTTPD_MYSQL_PASSWD_DIR/$domain.passwd ]; then
+			source $HTTPD_MYSQL_PASSWD_DIR/$domain.passwd
+			echo "pass ist $mysql_password"
+			cat >> $CONFFILE <<EOF
+    php_value mysql.default_host localhost
+    php_value mysql.default_user $mysql_user
+    php_value mysql.default_password $mysql_password
 
+    php_value mysqli.default_host localhost
+    php_value mysqli.default_user $mysql_user
+    php_value mysqli.default_pw $mysql_password
+EOF
 
-
-    fi
+		    fi
+    		fi
+		cat >> $CONFFILE <<EOF
+</VirtualHost>
+EOF
+	    fi
+	    
+        fi
 
     fi
     

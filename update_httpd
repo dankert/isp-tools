@@ -84,7 +84,7 @@ EOF
 		cat >> $CONFFILE <<EOF
 	
 <VirtualHost *:80>
-    # Kein Domainverantwortlicher vorhanden
+    # No domain owner available
     ServerName $domain
     Include $HTTPD_EXTRA_CONFIG_DIR/$domain.conf
 </VirtualHost>
@@ -94,7 +94,7 @@ EOF
 		cat >> $CONFFILE <<EOF
 	
 <VirtualHost *:80>
-    # Kein Domainverantwortlicher vorhanden
+    # Domain owner: $user
     ServerName $domain
 
     RewriteEngine on
@@ -128,9 +128,12 @@ EOF
 	
 	
 	
+	    # Zertifikatsdatei bestimmen
+	    key=/etc/ssl/local/server.key
+	    crt=/etc/ssl/local/cert/$domain.crt
 	
-	    if [ $ssl -eq 0 ]; then
-	
+	    if [ $ssl -eq 0 ] || [ ! -f $crt ]; then
+	      # no SSL or no SSL cert available
 		cat >> $CONFFILE <<EOF
 	
 #<VirtualHost *:443>
@@ -144,17 +147,6 @@ EOF
 <VirtualHost *:80>
 EOF
 	    else
-		# Zertifikatsdatei bestimmen
-		key=/etc/ssl/local/server.key
-		crt=/etc/ssl/local/cert/$domain.crt
-		if [ ! -f $crt ]; then
-		    mailcrt=/etc/ssl/local/cert/`postconf -h myhostname`.crt
-		    if [ -f $mailcrt ]; then
-			ln -s $mailcrt $crt
-		    else
-			touch $crt # Leere Zertifikatsdatei anlegen.
-		    fi
-		fi
 		
 		cat >> $CONFFILE <<EOF
 	

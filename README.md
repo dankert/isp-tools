@@ -1,10 +1,12 @@
 Server administration helper scripts
 ====================================
-(needs postfixadmin)
+(needs [postfixadmin][http://postfixadmin.sourceforge.net/])
 
 These scripts are helpful tools for server administration.
 
-Reads tables maintained by postfixadmin and generates
+What does it do
+------------
+Reads database tables maintained by [Postfixadmin][http://postfixadmin.sourceforge.net/] and generates
 - DNS zonefiles for Bind
 - Apache configuration
 - Lookup-Tables for Postfix MTA
